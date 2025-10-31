@@ -67,18 +67,30 @@ export async function getRecentOrders(limit = 5) {
 
     if (!admin?.store_id) return []
 
-    const { data, error } = await supabase
+    const { data: orders, error } = await supabase
       .from("orders")
-      .select(`
-        *,
-        customer:customers(id, full_name, phone_number)
-      `)
+      .select("*")
       .eq("store_id", admin.store_id)
       .order("created_at", { ascending: false })
       .limit(limit)
 
     if (error) throw error
-    return data || []
+    if (!orders || orders.length === 0) return []
+
+    // Fetch customers separately
+    const customerIds = [...new Set(orders.map(o => o.customer_id).filter(Boolean))]
+    const { data: customers } = customerIds.length > 0 ? await supabase
+      .from("customers")
+      .select("id, full_name, phone_number")
+      .in("id", customerIds) : { data: [] }
+
+    const customersMap = new Map((customers || []).map(c => [c.id, c]))
+
+    // Manually join the data
+    return orders.map(order => ({
+      ...order,
+      customer: order.customer_id ? customersMap.get(order.customer_id) || null : null,
+    }))
   } catch (error) {
     console.error("Error fetching recent orders:", error)
     return []

@@ -11,13 +11,15 @@ export function useCompleteRegistration() {
       storeName,
       storeAddress,
       storePhone,
+      email,
     }: {
       userId: string
-      phoneNumber: string
+      phoneNumber?: string
       fullName: string
       storeName: string
       storeAddress: string
       storePhone: string
+      email?: string
     }) => {
       return completeRegistration(
         userId,
@@ -25,7 +27,8 @@ export function useCompleteRegistration() {
         fullName,
         storeName,
         storeAddress,
-        storePhone
+        storePhone,
+        email
       )
     },
     onSuccess: (response) => {

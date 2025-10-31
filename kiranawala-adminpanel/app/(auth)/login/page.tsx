@@ -25,9 +25,15 @@ import {
   FormMessage,
 } from "@/components/ui/form"
 import { Input } from "@/components/ui/input"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { toast } from "sonner"
 import { ROUTES } from "@/lib/constants"
 import { formatPhoneNumber, isValidIndianPhone } from "@/lib/utils/phone"
+
+const emailLoginSchema = z.object({
+  email: z.string().email("Invalid email address"),
+  password: z.string().min(6, "Password must be at least 6 characters"),
+})
 
 const phoneLoginSchema = z.object({
   phone: z.string()
@@ -41,6 +47,7 @@ const otpSchema = z.object({
   otp: z.string().length(6, "OTP must be 6 digits"),
 })
 
+type EmailFormValues = z.infer<typeof emailLoginSchema>
 type PhoneFormValues = z.infer<typeof phoneLoginSchema>
 type OtpFormValues = z.infer<typeof otpSchema>
 
@@ -49,6 +56,14 @@ export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [otpSent, setOtpSent] = useState(false)
   const [phoneNumber, setPhoneNumber] = useState("")
+
+  const emailForm = useForm<EmailFormValues>({
+    resolver: zodResolver(emailLoginSchema),
+    defaultValues: {
+      email: "",
+      password: "",
+    },
+  })
 
   const phoneForm = useForm<PhoneFormValues>({
     resolver: zodResolver(phoneLoginSchema),
@@ -64,12 +79,49 @@ export default function LoginPage() {
     },
   })
 
+  async function onEmailSubmit(values: EmailFormValues) {
+    setIsLoading(true)
+
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: values.email,
+        password: values.password,
+      })
+
+      if (error) throw error
+
+      if (data.user) {
+        toast.success("Login successful!")
+        
+        // Check if user has completed registration
+        const { data: adminData } = await supabase
+          .from("store_admins")
+          .select("id")
+          .eq("user_id", data.user.id)
+          .maybeSingle()
+        
+        // Force a router refresh to trigger middleware
+        if (adminData) {
+          router.push(ROUTES.DASHBOARD)
+        } else {
+          router.push(ROUTES.REGISTER)
+        }
+        router.refresh()
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Login failed"
+      toast.error(errorMessage)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
   async function onPhoneSubmit(values: PhoneFormValues) {
     setIsLoading(true)
 
     try {
       const formattedPhone = formatPhoneNumber(values.phone)
-      
+
       const { error } = await supabase.auth.signInWithOtp({
         phone: formattedPhone,
       })
@@ -100,24 +152,22 @@ export default function LoginPage() {
       if (error) throw error
 
       if (data.user) {
-        // Check if user has completed registration before redirecting
+        toast.success("Login successful!")
+        
+        // Check if user has completed registration
         const { data: adminData } = await supabase
           .from("store_admins")
           .select("id")
           .eq("user_id", data.user.id)
           .maybeSingle()
-
-        toast.success("Login successful!")
         
-        // Add small delay to ensure session is set
-        await new Promise(resolve => setTimeout(resolve, 500))
-        
-        // Redirect based on registration status
+        // Force a router refresh to trigger middleware
         if (adminData) {
-          window.location.href = ROUTES.DASHBOARD
+          router.push(ROUTES.DASHBOARD)
         } else {
-          window.location.href = ROUTES.REGISTER
+          router.push(ROUTES.REGISTER)
         }
+        router.refresh()
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Invalid OTP"
@@ -143,44 +193,108 @@ export default function LoginPage() {
           Kiranawala Admin
         </CardTitle>
         <CardDescription>
-          {otpSent ? "Enter OTP sent to your phone" : "Sign in with your phone number"}
+          {otpSent
+            ? "Enter OTP sent to your phone"
+            : "Sign in to your account"}
         </CardDescription>
       </CardHeader>
       <CardContent>
         {!otpSent ? (
-          <Form {...phoneForm}>
-            <form onSubmit={phoneForm.handleSubmit(onPhoneSubmit)} className="space-y-4">
-              <FormField
-                control={phoneForm.control}
-                name="phone"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Phone Number</FormLabel>
-                    <FormControl>
-                      <Input
-                        type="tel"
-                        placeholder="9876543210"
-                        disabled={isLoading}
-                        {...field}
-                        maxLength={10}
-                      />
-                    </FormControl>
-                    <p className="text-xs text-muted-foreground">
-                      Enter 10-digit Indian mobile number
-                    </p>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <Button
-                type="submit"
-                className="w-full"
-                disabled={isLoading}
-              >
-                {isLoading ? "Sending OTP..." : "Send OTP"}
-              </Button>
-            </form>
-          </Form>
+          <Tabs defaultValue="email" className="space-y-4">
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="email">Email</TabsTrigger>
+              <TabsTrigger value="phone">Phone</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="email" className="space-y-4">
+              <Form {...emailForm}>
+                <form onSubmit={emailForm.handleSubmit(onEmailSubmit)} className="space-y-4">
+                  <FormField
+                    control={emailForm.control}
+                    name="email"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Email</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="email"
+                            placeholder="admin@example.com"
+                            disabled={isLoading}
+                            {...field}
+                          />
+                        </FormControl>
+                        <p className="text-xs text-muted-foreground">
+                          Use your email address and password
+                        </p>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={emailForm.control}
+                    name="password"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Password</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="password"
+                            placeholder="Enter your password"
+                            disabled={isLoading}
+                            {...field}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <Button
+                    type="submit"
+                    className="w-full"
+                    disabled={isLoading}
+                  >
+                    {isLoading ? "Signing in..." : "Sign In"}
+                  </Button>
+                </form>
+              </Form>
+            </TabsContent>
+
+            <TabsContent value="phone" className="space-y-4">
+              <Form {...phoneForm}>
+                <form onSubmit={phoneForm.handleSubmit(onPhoneSubmit)} className="space-y-4">
+                  <FormField
+                    control={phoneForm.control}
+                    name="phone"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Phone Number</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="tel"
+                            placeholder="9876543210"
+                            disabled={isLoading}
+                            {...field}
+                            maxLength={10}
+                          />
+                        </FormControl>
+                        <p className="text-xs text-muted-foreground">
+                          Enter 10-digit Indian mobile number
+                        </p>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <Button
+                    type="submit"
+                    className="w-full"
+                    disabled={isLoading}
+                  >
+                    {isLoading ? "Sending OTP..." : "Send OTP"}
+                  </Button>
+                </form>
+              </Form>
+            </TabsContent>
+          </Tabs>
         ) : (
           <Form {...otpForm}>
             <form onSubmit={otpForm.handleSubmit(onOtpSubmit)} className="space-y-4">
@@ -241,8 +355,8 @@ export default function LoginPage() {
       <CardFooter className="flex flex-col space-y-2">
         <div className="text-sm text-muted-foreground text-center">
           Don&apos;t have an account?{" "}
-          <Link 
-            href={ROUTES.REGISTER} 
+          <Link
+            href={ROUTES.REGISTER}
             className="text-primary hover:underline font-medium"
           >
             Register here

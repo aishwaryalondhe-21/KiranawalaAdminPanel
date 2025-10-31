@@ -25,7 +25,8 @@ export interface StoreSetupData {
 
 export interface AdminSetupData {
   user_id: string
-  phone_number: string
+  phone_number?: string
+  email?: string
   full_name: string
   store_id: string
   role: "owner"

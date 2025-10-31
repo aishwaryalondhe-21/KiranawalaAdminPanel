@@ -41,7 +41,7 @@ export function useAuth() {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null)
-      
+      setLoading(true)
       if (session?.user) {
         // Re-fetch admin data on auth change
         supabase

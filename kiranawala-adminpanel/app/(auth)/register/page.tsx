@@ -11,8 +11,11 @@ import {
 } from "@/components/ui/card"
 import { RegistrationForm } from "@/components/auth/registration-form"
 import { ROUTES } from "@/lib/constants"
+import { useAuth } from "@/hooks/useAuth"
 
 export default function RegisterPage() {
+  const { user } = useAuth()
+
   return (
     <Card className="border-slate-200 dark:border-slate-800">
       <CardHeader className="space-y-1">
@@ -24,7 +27,7 @@ export default function RegisterPage() {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <RegistrationForm />
+        <RegistrationForm user={user} />
       </CardContent>
       <CardFooter className="flex flex-col space-y-2">
         <div className="text-sm text-muted-foreground text-center">

@@ -74,7 +74,8 @@ export interface Store {
 export interface StoreAdmin {
   id: string
   user_id: string
-  phone_number: string
+  phone_number?: string
+  email?: string
   full_name: string
   store_id: string
   role: "owner" | "manager" | "staff"

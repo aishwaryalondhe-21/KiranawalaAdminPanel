@@ -19,54 +19,49 @@ export async function getCustomers(): Promise<Customer[]> {
     const storeId = await getStoreId()
     if (!storeId) return []
 
-    // Get all customers who have placed orders at this store
-    const { data, error } = await supabase
+    // Get all orders for this store
+    const { data: orders, error } = await supabase
       .from("orders")
-      .select(`
-        customer_id,
-        total_amount,
-        created_at,
-        customer:customers(id, full_name, phone_number, email, created_at)
-      `)
+      .select("customer_id, total_amount, created_at")
       .eq("store_id", storeId)
       .order("created_at", { ascending: false })
 
     if (error) throw error
+    if (!orders || orders.length === 0) return []
+
+    // Get unique customer IDs
+    const customerIds = [...new Set(orders.map(o => o.customer_id).filter(Boolean))]
+    
+    // Fetch customers separately
+    const { data: customers } = await supabase
+      .from("customers")
+      .select("id, full_name, phone_number, email, created_at")
+      .in("id", customerIds)
+
+    if (!customers) return []
 
     // Aggregate customer data
     const customerMap = new Map<string, Customer>()
     
-    data?.forEach((order: {
-      customer_id: string
-      total_amount: number
-      created_at: string
-      customer: { id: string; full_name: string; phone_number: string; email?: string; created_at: string }[]
-    }) => {
-      const customerId = order.customer_id
-      const customer = order.customer?.[0]
-      
-      if (!customer) return
+    customers.forEach(customer => {
+      customerMap.set(customer.id, {
+        ...customer,
+        total_orders: 0,
+        total_spent: 0,
+        last_order_date: null
+      })
+    })
 
-      if (!customerMap.has(customerId)) {
-        customerMap.set(customerId, {
-          id: customer.id,
-          full_name: customer.full_name,
-          phone_number: customer.phone_number,
-          email: customer.email,
-          created_at: customer.created_at,
-          total_orders: 0,
-          total_spent: 0,
-          last_order_date: order.created_at
-        })
-      }
-
-      const existingCustomer = customerMap.get(customerId)!
-      existingCustomer.total_orders = (existingCustomer.total_orders || 0) + 1
-      existingCustomer.total_spent = (existingCustomer.total_spent || 0) + order.total_amount
-      
-      // Update last order date if this order is more recent
-      if (!existingCustomer.last_order_date || order.created_at > existingCustomer.last_order_date) {
-        existingCustomer.last_order_date = order.created_at
+    orders.forEach((order) => {
+      const customer = customerMap.get(order.customer_id)
+      if (customer) {
+        customer.total_orders = (customer.total_orders || 0) + 1
+        customer.total_spent = (customer.total_spent || 0) + order.total_amount
+        
+        // Update last order date if this order is more recent
+        if (!customer.last_order_date || order.created_at > customer.last_order_date) {
+          customer.last_order_date = order.created_at
+        }
       }
     })
 
@@ -98,30 +93,49 @@ export async function getCustomerDetails(customerId: string): Promise<CustomerDe
     // Get customer orders for this store
     const { data: orders, error: ordersError } = await supabase
       .from("orders")
-      .select(`
-        *,
-        order_items(
-          id,
-          quantity,
-          price,
-          product:products(id, name, image_url)
-        )
-      `)
+      .select("*")
       .eq("customer_id", customerId)
       .eq("store_id", storeId)
       .order("created_at", { ascending: false })
 
     if (ordersError) throw ordersError
 
+    // Get order items for these orders
+    const orderIds = orders?.map(o => o.id) || []
+    const { data: orderItems } = orderIds.length > 0 ? await supabase
+      .from("order_items")
+      .select("id, order_id, quantity, price, product_id")
+      .in("order_id", orderIds) : { data: [] }
+
+    // Get products for order items
+    const productIds = [...new Set(orderItems?.map(oi => oi.product_id).filter(Boolean) || [])]
+    const { data: products } = productIds.length > 0 ? await supabase
+      .from("products")
+      .select("id, name, image_url")
+      .in("id", productIds) : { data: [] }
+
+    const productsMap = new Map((products || []).map(p => [p.id, p]))
+
+    // Manually join order items with products
+    const ordersWithItems = orders?.map(order => ({
+      ...order,
+      order_items: (orderItems || [])
+        .filter(oi => oi.order_id === order.id)
+        .map(oi => ({
+          ...oi,
+          product: oi.product_id ? productsMap.get(oi.product_id) || null : null,
+        })),
+    })) || []
+
     // Calculate stats
-    const totalOrders = orders?.length || 0
-    const totalSpent = orders?.reduce((sum, order) => sum + order.total_amount, 0) || 0
+    const totalOrders = ordersWithItems.length
+    const totalSpent = ordersWithItems.reduce((sum, order) => sum + order.total_amount, 0)
     const averageOrderValue = totalOrders > 0 ? totalSpent / totalOrders : 0
-    const lastOrderDate = orders?.[0]?.created_at || null
+    const lastOrderDate = ordersWithItems[0]?.created_at || null
 
     return {
       ...customer,
-      orders: orders || [],
+      orders: ordersWithItems,
       orderStats: {
         totalOrders,
         totalSpent,
@@ -140,49 +154,46 @@ export async function searchCustomers(query: string): Promise<Customer[]> {
     const storeId = await getStoreId()
     if (!storeId) return []
 
-    const { data, error } = await supabase
-      .from("orders")
-      .select(`
-        customer_id,
-        total_amount,
-        created_at,
-        customer:customers!inner(id, full_name, phone_number, email, created_at)
-      `)
-      .eq("store_id", storeId)
-      .or(`full_name.ilike.%${query}%,phone_number.ilike.%${query}%`, { foreignTable: "customers" })
+    // Search customers directly
+    const { data: customers, error: customersError } = await supabase
+      .from("customers")
+      .select("id, full_name, phone_number, email, created_at")
+      .or(`full_name.ilike.%${query}%,phone_number.ilike.%${query}%`)
 
-    if (error) throw error
+    if (customersError) throw customersError
+    if (!customers || customers.length === 0) return []
+
+    const customerIds = customers.map(c => c.id)
+
+    // Get orders for these customers at this store
+    const { data: orders } = await supabase
+      .from("orders")
+      .select("customer_id, total_amount, created_at")
+      .eq("store_id", storeId)
+      .in("customer_id", customerIds)
 
     // Aggregate customer data
     const customerMap = new Map<string, Customer>()
     
-    data?.forEach((order: {
-      customer_id: string
-      total_amount: number
-      created_at: string
-      customer: { id: string; full_name: string; phone_number: string; email?: string; created_at: string }[]
-    }) => {
-      const customerId = order.customer_id
-      const customer = order.customer?.[0]
-      
-      if (!customer) return
+    customers.forEach(customer => {
+      customerMap.set(customer.id, {
+        ...customer,
+        total_orders: 0,
+        total_spent: 0,
+        last_order_date: null
+      })
+    })
 
-      if (!customerMap.has(customerId)) {
-        customerMap.set(customerId, {
-          id: customer.id,
-          full_name: customer.full_name,
-          phone_number: customer.phone_number,
-          email: customer.email,
-          created_at: customer.created_at,
-          total_orders: 0,
-          total_spent: 0,
-          last_order_date: order.created_at
-        })
+    orders?.forEach((order) => {
+      const customer = customerMap.get(order.customer_id)
+      if (customer) {
+        customer.total_orders = (customer.total_orders || 0) + 1
+        customer.total_spent = (customer.total_spent || 0) + order.total_amount
+        
+        if (!customer.last_order_date || order.created_at > customer.last_order_date) {
+          customer.last_order_date = order.created_at
+        }
       }
-
-      const existingCustomer = customerMap.get(customerId)!
-      existingCustomer.total_orders = (existingCustomer.total_orders || 0) + 1
-      existingCustomer.total_spent = (existingCustomer.total_spent || 0) + order.total_amount
     })
 
     return Array.from(customerMap.values())

@@ -89,16 +89,26 @@ export async function createStoreAdmin(adminData: AdminSetupData): Promise<strin
       throw new Error("You can only create an admin record for yourself")
     }
 
+    // Prepare insert data
+    const insertData: any = {
+      user_id: adminData.user_id,
+      full_name: adminData.full_name,
+      store_id: adminData.store_id,
+      role: adminData.role,
+      is_active: adminData.is_active,
+    }
+
+    // Add either phone_number or email (at least one required)
+    if (adminData.phone_number) {
+      insertData.phone_number = adminData.phone_number
+    }
+    if (adminData.email) {
+      insertData.email = adminData.email
+    }
+
     const { data, error } = await supabase
       .from("store_admins")
-      .insert({
-        user_id: adminData.user_id,
-        phone_number: adminData.phone_number,
-        full_name: adminData.full_name,
-        store_id: adminData.store_id,
-        role: adminData.role,
-        is_active: adminData.is_active,
-      })
+      .insert(insertData)
       .select("id")
       .single()
 
@@ -111,7 +121,7 @@ export async function createStoreAdmin(adminData: AdminSetupData): Promise<strin
       })
       throw new Error(error.message || "Failed to create admin record. Please ensure you have permission.")
     }
-    
+
     if (!data) {
       throw new Error("Failed to create admin record - no data returned")
     }
@@ -128,11 +138,12 @@ export async function createStoreAdmin(adminData: AdminSetupData): Promise<strin
  */
 export async function completeRegistration(
   userId: string,
-  phoneNumber: string,
+  phoneNumber: string | undefined,
   fullName: string,
   storeName: string,
   storeAddress: string,
-  storePhone: string
+  storePhone: string,
+  email?: string
 ): Promise<RegistrationResponse> {
   try {
     // Step 0: Verify authentication
@@ -145,12 +156,14 @@ export async function completeRegistration(
       throw new Error("Authentication mismatch. Please try logging in again.")
     }
 
-    // Step 1: Check if phone number already exists
-    const phoneExists = await checkPhoneNumberExists(phoneNumber)
-    if (phoneExists) {
-      return {
-        success: false,
-        error: "This phone number is already registered. Please login instead.",
+    // Step 1: Check if phone number or email already exists
+    if (phoneNumber) {
+      const phoneExists = await checkPhoneNumberExists(phoneNumber)
+      if (phoneExists) {
+        return {
+          success: false,
+          error: "This phone number is already registered. Please login instead.",
+        }
       }
     }
 
@@ -180,6 +193,7 @@ export async function completeRegistration(
     const adminData: AdminSetupData = {
       user_id: userId,
       phone_number: phoneNumber,
+      email: email,
       full_name: fullName,
       store_id: storeId,
       role: "owner",
@@ -192,14 +206,14 @@ export async function completeRegistration(
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Failed to create admin record"
       console.error("Admin creation failed:", error)
-      
+
       // Attempt to clean up the orphaned store
       try {
         await supabase.from("stores").delete().eq("id", storeId)
       } catch (cleanupError) {
         console.error("Failed to cleanup orphaned store:", cleanupError)
       }
-      
+
       return {
         success: false,
         error: `Admin profile creation failed: ${errorMessage}. Please check your permissions and try again.`,
@@ -213,9 +227,9 @@ export async function completeRegistration(
     }
   } catch (error) {
     console.error("Error completing registration:", error)
-    
+
     const errorMessage = error instanceof Error ? error.message : "Registration failed. Please try again."
-    
+
     return {
       success: false,
       error: errorMessage,
